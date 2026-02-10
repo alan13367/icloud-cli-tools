@@ -2,9 +2,10 @@
 
 > Access your iCloud **Calendar**, **Reminders**, **Notes**, and **Find My** devices from the Linux terminal.
 
-[![CI](https://github.com/alan/icloud-cli-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/alan/icloud-cli-tools/actions)
+[![CI](https://github.com/alan13367/icloud-cli-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/alan13367/icloud-cli-tools/actions)
+[![PyPI](https://img.shields.io/pypi/v/icloud-cli-tools.svg)](https://pypi.org/project/icloud-cli-tools/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-green.svg)](https://python.org)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-green.svg)](https://python.org)
 
 ## Features
 
@@ -19,14 +20,28 @@
 ## Installation
 
 ```bash
-# From source
+# From PyPI (recommended)
+pip install icloud-cli-tools
+```
+
+Or install from source:
+
+```bash
+# Clone the repo
 git clone https://github.com/alan13367/icloud-cli-tools.git
 cd icloud-cli-tools
-pip install -e .
 
-# Or directly from git
-pip install git+https://github.com/alan13367/icloud-cli-tools.git
+# Set up a virtual environment (recommended, required on modern Debian/Ubuntu)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
+
+> **Tip:** To use `icloud-cli` without activating the venv every time, add an alias:
+> ```bash
+> echo 'alias icloud-cli="~/icloud-cli-tools/.venv/bin/icloud-cli"' >> ~/.bashrc
+> source ~/.bashrc
+> ```
 
 ## Quick Start
 

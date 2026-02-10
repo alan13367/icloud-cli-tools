@@ -7,7 +7,7 @@ name = "icloud-cli-tools"
 version = "0.1.0"
 description = "Access iCloud Calendar, Reminders, Notes, and Find My from Linux"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.9"
 authors = [{ name = "alan" }]
 keywords = [
@@ -24,7 +24,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -50,9 +49,9 @@ dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.5"]
 icloud-cli = "icloud_cli.main:cli"
 
 [project.urls]
-Homepage = "https://github.com/alan/icloud-cli-tools"
-Repository = "https://github.com/alan/icloud-cli-tools"
-Issues = "https://github.com/alan/icloud-cli-tools/issues"
+Homepage = "https://github.com/alan13367/icloud-cli-tools"
+Repository = "https://github.com/alan13367/icloud-cli-tools"
+Issues = "https://github.com/alan13367/icloud-cli-tools/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
