@@ -19,7 +19,6 @@ from icloud_cli.auth import AuthManager
 from icloud_cli.config import Config
 from icloud_cli.output import error, info, success, warning
 
-
 PID_FILE_NAME = "icloud-cli-daemon.pid"
 
 

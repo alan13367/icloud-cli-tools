@@ -9,13 +9,11 @@ Supports three output formats:
 from __future__ import annotations
 
 import json
-import sys
 from typing import Any
 
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.text import Text
+from rich.table import Table
 
 console = Console()
 error_console = Console(stderr=True)

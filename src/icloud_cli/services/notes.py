@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import email
 import imaplib
-import re
 from datetime import datetime
 from email.mime.text import MIMEText
 from typing import Any
 
 import html2text
-
 
 IMAP_HOST = "imap.mail.me.com"
 IMAP_PORT = 993
@@ -79,7 +77,11 @@ class NotesService:
                 # Parse envelope
                 envelope = msg_data[0]
                 if isinstance(envelope, tuple) and len(envelope) > 1:
-                    msg = email.message_from_bytes(envelope[1]) if isinstance(envelope[1], bytes) else None
+                    msg = (
+                        email.message_from_bytes(envelope[1])
+                        if isinstance(envelope[1], bytes)
+                        else None
+                    )
                     subject = _decode_header(msg.get("Subject", "Untitled")) if msg else "Untitled"
                     date_str = msg.get("Date", "") if msg else ""
                 else:
@@ -151,10 +153,11 @@ class NotesService:
                 if payload:
                     content_type = msg.get_content_type()
                     decoded = payload.decode("utf-8", errors="replace")
-                    if content_type == "text/html":
-                        body = self._h2t.handle(decoded)
-                    else:
-                        body = decoded
+                    body = (
+                        self._h2t.handle(decoded)
+                        if content_type == "text/html"
+                        else decoded
+                    )
 
             return {
                 "id": note_id,
@@ -192,7 +195,10 @@ class NotesService:
             msg["Date"] = email.utils.formatdate(localtime=True)
 
             # Wrap body in basic HTML
-            html_body = f"<html><head><title>{title}</title></head><body><div>{body}</div></body></html>"
+            html_body = (
+                f"<html><head><title>{title}</title></head>"
+                f"<body><div>{body}</div></body></html>"
+            )
             msg.set_payload(html_body, "utf-8")
 
             # Append to Notes folder

@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock
 
-import pytest
-
-from icloud_cli.services.calendar import CalendarService, _parse_date, _format_datetime
+from icloud_cli.services.calendar import CalendarService, _format_datetime, _parse_date
 
 
 class TestDateParsing:

@@ -5,7 +5,6 @@ Main CLI entry point using Click with subcommand groups.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import click
@@ -13,8 +12,7 @@ import click
 from icloud_cli import __version__
 from icloud_cli.auth import AuthManager
 from icloud_cli.config import Config
-from icloud_cli.output import console, error, info, render, render_detail, success, warning
-
+from icloud_cli.output import error, info, render, render_detail, success
 
 # ─── Global context ──────────────────────────────────────────────────────────
 
@@ -219,7 +217,11 @@ def reminders_add(
     from icloud_cli.services.reminders import RemindersService
 
     service = RemindersService(ctx.auth.api, ctx.config)
-    if service.add_reminder(title=title, due_date=due, list_name=list_name, description=description):
+    result = service.add_reminder(
+        title=title, due_date=due,
+        list_name=list_name, description=description,
+    )
+    if result:
         success(f"Reminder '{title}' created.")
     else:
         error("Failed to create reminder.")

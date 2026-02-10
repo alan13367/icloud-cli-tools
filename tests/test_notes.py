@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from icloud_cli.services.notes import NotesService, _decode_header, _format_date
 
 
@@ -62,9 +60,13 @@ class TestNotesService:
         mock_conn.login.return_value = ("OK", [])
         mock_conn.select.return_value = ("OK", [b"1"])
         mock_conn.search.return_value = ("OK", [b"1"])
+        hdr_bytes = (
+            b"Subject: Test Note\r\n"
+            b"Date: Mon, 15 Jun 2025 14:30:00 +0000\r\n\r\n"
+        )
         mock_conn.fetch.return_value = (
             "OK",
-            [(b"1 (BODY[HEADER.FIELDS (SUBJECT DATE)] {50}", b"Subject: Test Note\r\nDate: Mon, 15 Jun 2025 14:30:00 +0000\r\n\r\n"), b")"],
+            [(b"1 (BODY[HEADER.FIELDS (SUBJECT DATE)] {50}", hdr_bytes), b")"],
         )
 
         service = NotesService("test@icloud.com", "password")

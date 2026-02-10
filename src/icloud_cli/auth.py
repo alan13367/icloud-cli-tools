@@ -13,7 +13,6 @@ import click
 import keyring
 from pyicloud import PyiCloudService
 from pyicloud.exceptions import (
-    PyiCloudAPIResponseException,
     PyiCloudFailedLoginException,
 )
 

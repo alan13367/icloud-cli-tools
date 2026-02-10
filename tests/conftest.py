@@ -42,8 +42,8 @@ def mock_api():
 @pytest.fixture
 def mock_auth(mock_api, mock_config):
     """Create a mocked AuthManager."""
-    with patch("icloud_cli.auth.AuthManager") as MockAuth:
-        auth = MockAuth.return_value
+    with patch("icloud_cli.auth.AuthManager") as mock_auth_cls:
+        auth = mock_auth_cls.return_value
         auth.api = mock_api
         auth.config = mock_config
         auth.get_imap_credentials.return_value = ("test@icloud.com", "test-password")

@@ -205,7 +205,9 @@ def _format_due_date(due_date: Any) -> str:
     if isinstance(due_date, list) and len(due_date) >= 4:
         # iCloud format: [year, month, day, hour, minute]
         try:
-            return f"{due_date[0]:04d}-{due_date[1]:02d}-{due_date[2]:02d} {due_date[3]:02d}:{due_date[4]:02d}"
+            date_part = f"{due_date[0]:04d}-{due_date[1]:02d}-{due_date[2]:02d}"
+            time_part = f"{due_date[3]:02d}:{due_date[4]:02d}"
+            return f"{date_part} {time_part}"
         except (IndexError, TypeError):
             return str(due_date)
     if isinstance(due_date, (int, float)):

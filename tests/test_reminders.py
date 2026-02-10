@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
-import pytest
-
 from icloud_cli.services.reminders import RemindersService, _format_due_date
 
 
