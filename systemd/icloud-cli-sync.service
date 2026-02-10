@@ -1,0 +1,20 @@
+[Unit]
+Description=icloud-cli background sync daemon
+Documentation=https://github.com/alan/icloud-cli-tools
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/icloud-cli daemon start
+ExecStop=%h/.local/bin/icloud-cli daemon stop
+Restart=on-failure
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
