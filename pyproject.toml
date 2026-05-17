@@ -33,7 +33,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "pyicloud>=1.0.0",
+    "pyicloud>=2.5.0",
     "click>=8.1",
     "rich>=13.0",
     "keyring>=25.0",

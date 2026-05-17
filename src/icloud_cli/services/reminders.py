@@ -37,44 +37,41 @@ class RemindersService:
             List of reminder dictionaries.
         """
         try:
-            self._reminders_service.refresh()
-            lists = self._reminders_service.lists
+            lists = list(self._reminders_service.lists())
         except Exception as e:
             from icloud_cli.output import error
             error(f"Failed to fetch reminders: {e}")
             return []
 
         result = []
-        for rlist in lists.values():
-            rlist_title = rlist.get("title", "Untitled List")
+        for rlist in lists:
+            rlist_title = rlist.title
+            rlist_id = rlist.id
 
             if list_name and rlist_title.lower() != list_name.lower():
                 continue
 
-            rlist_guid = rlist.get("guid", "")
-            reminders = self._reminders_service.get(rlist_guid) or []
+            reminders = list(self._reminders_service.reminders(list_id=rlist_id))
 
             for reminder in reminders:
-                is_completed = reminder.get("completedDate") is not None
-
-                if not show_completed and is_completed:
+                if not show_completed and reminder.completed:
                     continue
 
                 due_date = ""
-                if reminder.get("dueDate"):
-                    due_date = _format_due_date(reminder["dueDate"])
+                if reminder.due_date:
+                    due_date = _format_due_date(reminder.due_date)
 
                 priority_map = {0: "", 1: "High", 5: "Medium", 9: "Low"}
-                priority = priority_map.get(reminder.get("priority", 0), "")
+                priority = priority_map.get(reminder.priority, "")
 
                 result.append({
-                    "id": reminder.get("guid", ""),
-                    "title": reminder.get("title", "Untitled"),
+                    "id": reminder.id,
+                    "title": reminder.title,
                     "list": rlist_title,
                     "due_date": due_date,
                     "priority": priority,
-                    "completed": "✓" if is_completed else "",
-                    "description": reminder.get("description", ""),
+                    "completed": "✓" if reminder.completed else "",
+                    "description": reminder.desc,
                 })
 
         return result
@@ -99,20 +96,32 @@ class RemindersService:
         """
         try:
             # Find the target collection (list)
-            collection = None
+            target_list_id: str | None = None
             if list_name:
-                self._reminders_service.refresh()
-                for rlist in self._reminders_service.lists.values():
-                    if rlist.get("title", "").lower() == list_name.lower():
-                        collection = rlist.get("guid")
+                for rlist in self._reminders_service.lists():
+                    if rlist.title.lower() == list_name.lower():
+                        target_list_id = rlist.id
                         break
 
-                if collection is None:
+                if target_list_id is None:
                     from icloud_cli.output import warning
                     warning(f"List '{list_name}' not found, using default list.")
+                    for rlist in self._reminders_service.lists():
+                        target_list_id = rlist.id
+                        break
+            else:
+                # Use the first available list as default
+                for rlist in self._reminders_service.lists():
+                    target_list_id = rlist.id
+                    break
+
+            if target_list_id is None:
+                from icloud_cli.output import error
+                error("No reminder lists found.")
+                return False
 
             # Parse due date
-            due = None
+            due: datetime | None = None
             if due_date:
                 try:
                     due = dateutil_parser.parse(due_date)
@@ -121,16 +130,13 @@ class RemindersService:
                     error("Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM.")
                     return False
 
-            # Build post data
-            kwargs = {"title": title}
-            if description:
-                kwargs["description"] = description
-            if collection:
-                kwargs["collection"] = collection
-            if due:
-                kwargs["due_date"] = due
-
-            self._reminders_service.post(**kwargs)
+            self._reminders_service.create(
+                list_id=target_list_id,
+                title=title,
+                desc=description or "",
+                due_date=due,
+                priority=0,
+            )
             return True
 
         except Exception as e:
@@ -142,35 +148,17 @@ class RemindersService:
         """Mark a reminder as completed.
 
         Args:
-            reminder_id: The reminder GUID.
+            reminder_id: The reminder ID.
 
         Returns:
             True if reminder was marked as completed.
         """
         try:
-            # Find the reminder across all lists
-            self._reminders_service.refresh()
-            for rlist in self._reminders_service.lists.values():
-                rlist_guid = rlist.get("guid", "")
-                reminders = self._reminders_service.get(rlist_guid) or []
-
-                for reminder in reminders:
-                    if reminder.get("guid") == reminder_id:
-                        reminder["completedDate"] = datetime.now().strftime(
-                            "%Y-%m-%dT%H:%M:%S"
-                        )
-                        # Use the API to update
-                        self._reminders_service.post(
-                            title=reminder.get("title", ""),
-                            guid=reminder_id,
-                            completed_date=datetime.now(),
-                        )
-                        return True
-
-            from icloud_cli.output import error
-            error(f"Reminder '{reminder_id}' not found.")
-            return False
-
+            reminder = self._reminders_service.get(reminder_id)
+            reminder.completed = True
+            reminder.completed_date = datetime.now()
+            self._reminders_service.update(reminder)
+            return True
         except Exception as e:
             from icloud_cli.output import error
             error(f"Failed to complete reminder: {e}")
@@ -180,13 +168,14 @@ class RemindersService:
         """Delete a reminder.
 
         Args:
-            reminder_id: The reminder GUID.
+            reminder_id: The reminder ID.
 
         Returns:
             True if reminder was deleted.
         """
         try:
-            self._reminders_service.delete(reminder_id)
+            reminder = self._reminders_service.get(reminder_id)
+            self._reminders_service.delete(reminder)
             return True
         except Exception as e:
             from icloud_cli.output import error
@@ -215,4 +204,6 @@ def _format_due_date(due_date: Any) -> str:
             return datetime.fromtimestamp(due_date / 1000).strftime("%Y-%m-%d %H:%M")
         except (ValueError, OSError):
             return str(due_date)
+    if isinstance(due_date, datetime):
+        return due_date.strftime("%Y-%m-%d %H:%M")
     return str(due_date)
