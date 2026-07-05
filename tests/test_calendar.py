@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import MagicMock
+
+from pyicloud.services.calendar import EventObject
 
 from icloud_cli.services.calendar import CalendarService, _format_datetime, _parse_date
 
@@ -59,16 +62,20 @@ class TestFormatDatetime:
 
 
 class TestCalendarService:
-    """Tests for CalendarService with mocked API."""
+    """Tests for CalendarService with the pyicloud >=2.5 calendar API mocked."""
 
     def test_list_events_empty(self, mock_api, mock_config):
-        mock_api.calendar.events.return_value = []
+        mock_api.calendar.get_calendars.return_value = []
+        mock_api.calendar.get_events.return_value = []
         service = CalendarService(mock_api, mock_config)
         events = service.list_events()
         assert events == []
 
     def test_list_events_returns_formatted_data(self, mock_api, mock_config):
-        mock_api.calendar.events.return_value = [
+        mock_api.calendar.get_calendars.return_value = [
+            {"guid": "cal-1", "title": "Personal"}
+        ]
+        mock_api.calendar.get_events.return_value = [
             {
                 "guid": "event-123",
                 "title": "Team Meeting",
@@ -86,19 +93,62 @@ class TestCalendarService:
         assert events[0]["title"] == "Team Meeting"
         assert events[0]["id"] == "event-123"
         assert events[0]["location"] == "Room A"
+        # pGuid is resolved to the human-readable calendar title.
+        assert events[0]["calendar"] == "Personal"
 
     def test_get_event_not_found(self, mock_api, mock_config):
-        mock_api.calendar.events.return_value = []
+        mock_api.calendar.get_events.return_value = []
         service = CalendarService(mock_api, mock_config)
         result = service.get_event("nonexistent-id")
         assert result is None
 
-    def test_delete_event_success(self, mock_api, mock_config):
-        mock_api.calendar.delete_event.return_value = None
+    def test_add_event_builds_event_object(self, mock_api, mock_config):
+        mock_api.calendar.get_calendars.return_value = [
+            {"guid": "cal-1", "title": "Personal"}
+        ]
         service = CalendarService(mock_api, mock_config)
+
+        ok = service.add_event(
+            title="Lunch",
+            start="2025-06-15 12:00",
+            end="2025-06-15 13:00",
+            calendar_name="Personal",
+        )
+
+        assert ok is True
+        mock_api.calendar.add_event.assert_called_once()
+        event_obj = mock_api.calendar.add_event.call_args.args[0]
+        assert isinstance(event_obj, EventObject)
+        assert event_obj.pguid == "cal-1"
+        assert event_obj.title == "Lunch"
+
+    def test_delete_event_success(self, mock_api, mock_config):
+        mock_api.calendar.get_events.return_value = [
+            {"guid": "event-123", "pGuid": "cal-1"}
+        ]
+        detail = MagicMock()
+        mock_api.calendar.get_event_detail.return_value = detail
+        service = CalendarService(mock_api, mock_config)
+
         assert service.delete_event("event-123") is True
+        mock_api.calendar.get_event_detail.assert_called_once_with(
+            "cal-1", "event-123", as_obj=True
+        )
+        mock_api.calendar.remove_event.assert_called_once_with(detail)
+
+    def test_delete_event_not_found(self, mock_api, mock_config):
+        mock_api.calendar.get_events.return_value = [
+            {"guid": "other-event", "pGuid": "cal-1"}
+        ]
+        service = CalendarService(mock_api, mock_config)
+
+        assert service.delete_event("event-123") is False
+        mock_api.calendar.remove_event.assert_not_called()
 
     def test_delete_event_failure(self, mock_api, mock_config):
-        mock_api.calendar.delete_event.side_effect = Exception("Not found")
+        mock_api.calendar.get_events.return_value = [
+            {"guid": "event-123", "pGuid": "cal-1"}
+        ]
+        mock_api.calendar.remove_event.side_effect = Exception("boom")
         service = CalendarService(mock_api, mock_config)
         assert service.delete_event("event-123") is False

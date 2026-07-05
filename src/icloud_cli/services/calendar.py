@@ -10,6 +10,7 @@ from typing import Any
 
 from dateutil import parser as dateutil_parser
 from pyicloud import PyiCloudService
+from pyicloud.services.calendar import EventObject
 
 from icloud_cli.config import Config
 
@@ -47,6 +48,19 @@ def _format_datetime(dt: Any) -> str:
             return dt
     if isinstance(dt, datetime):
         return dt.strftime("%Y-%m-%d %H:%M")
+    if isinstance(dt, list) and len(dt) >= 4:
+        # iCloud format: [packed, year, month, day, hour, minute, tz_offset_minutes]
+        try:
+            parsed = datetime(
+                dt[1],
+                dt[2],
+                dt[3],
+                dt[4] if len(dt) > 4 else 0,
+                dt[5] if len(dt) > 5 else 0,
+            )
+            return parsed.strftime("%Y-%m-%d %H:%M")
+        except (IndexError, TypeError, ValueError):
+            return str(dt)
     if isinstance(dt, (int, float)):
         # Unix timestamp in milliseconds
         try:
@@ -80,7 +94,11 @@ class CalendarService:
         end = _parse_date(to_date, default=start + timedelta(days=7))
 
         try:
-            events = self.api.calendar.events(from_dt=start, to_dt=end)
+            cal_name = {
+                cal.get("guid"): cal.get("title", "")
+                for cal in self.api.calendar.get_calendars()
+            }
+            events = self.api.calendar.get_events(from_dt=start, to_dt=end)
         except Exception as e:
             from icloud_cli.output import error
             error(f"Failed to fetch events: {e}")
@@ -88,6 +106,7 @@ class CalendarService:
 
         result = []
         for event in events:
+            pguid = event.get("pGuid", "")
             result.append({
                 "id": event.get("guid", ""),
                 "title": event.get("title", "Untitled"),
@@ -97,7 +116,7 @@ class CalendarService:
                 "end": _format_datetime(
                     event.get("endDate") or event.get("localEndDate")
                 ),
-                "calendar": event.get("pGuid", ""),
+                "calendar": cal_name.get(pguid, pguid),
                 "location": event.get("location", ""),
                 "all_day": event.get("allDay", False),
             })
@@ -120,7 +139,7 @@ class CalendarService:
         end = now + timedelta(days=365)
 
         try:
-            events = self.api.calendar.events(from_dt=start, to_dt=end)
+            events = self.api.calendar.get_events(from_dt=start, to_dt=end)
         except Exception:
             return None
 
@@ -175,19 +194,28 @@ class CalendarService:
             return False
 
         try:
-            # Build event payload
-            event_data = {
-                "title": title,
-                "startDate": _datetime_to_icloud(start_dt),
-                "endDate": _datetime_to_icloud(end_dt),
-            }
+            calendars = self.api.calendar.get_calendars()
+            cal_guid = None
+            if calendar_name:
+                for cal in calendars:
+                    if cal.get("title", "").lower() == calendar_name.lower():
+                        cal_guid = cal.get("guid")
+                        break
+            if not cal_guid and calendars:
+                cal_guid = calendars[0].get("guid")
+            if not cal_guid:
+                from icloud_cli.output import error
+                error("No calendars found.")
+                return False
 
-            if location:
-                event_data["location"] = location
-            if description:
-                event_data["description"] = description
-
-            self.api.calendar.create_event(**event_data)
+            event_obj = EventObject(
+                pguid=cal_guid,
+                title=title,
+                start_date=start_dt,
+                end_date=end_dt,
+                location=location or "",
+            )
+            self.api.calendar.add_event(event_obj)
             return True
         except Exception as e:
             from icloud_cli.output import error
@@ -204,14 +232,25 @@ class CalendarService:
             True if event was deleted successfully.
         """
         try:
-            self.api.calendar.delete_event(event_id)
+            now = datetime.now()
+            events = self.api.calendar.get_events(
+                from_dt=now - timedelta(days=365),
+                to_dt=now + timedelta(days=365),
+            )
+            pguid = None
+            for ev in events:
+                if ev.get("guid") == event_id:
+                    pguid = ev.get("pGuid")
+                    break
+            if not pguid:
+                from icloud_cli.output import error
+                error(f"Event '{event_id}' not found.")
+                return False
+
+            event_obj = self.api.calendar.get_event_detail(pguid, event_id, as_obj=True)
+            self.api.calendar.remove_event(event_obj)
             return True
         except Exception as e:
             from icloud_cli.output import error
             error(f"Failed to delete event: {e}")
             return False
-
-
-def _datetime_to_icloud(dt: datetime) -> list[int]:
-    """Convert a datetime to iCloud's date format [year, month, day, hour, minute]."""
-    return [dt.year, dt.month, dt.day, dt.hour, dt.minute]

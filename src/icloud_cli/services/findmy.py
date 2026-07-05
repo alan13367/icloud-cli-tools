@@ -30,9 +30,9 @@ class FindMyService:
             return []
 
         result = []
-        for device in devices:
+        for device in devices.values():
             status_data = device.status()
-            location = device.location()
+            location = device.location
 
             loc_str = ""
             if location and location.get("latitude") and location.get("longitude"):
@@ -69,7 +69,7 @@ class FindMyService:
             return None
 
         status_data = device.status()
-        location = device.location()
+        location = device.location
 
         if not location:
             from icloud_cli.output import warning
@@ -157,13 +157,13 @@ class FindMyService:
         name_lower = name.lower()
 
         # Exact match first
-        for device in devices:
+        for device in devices.values():
             status = device.status()
             if status.get("name", "").lower() == name_lower:
                 return device
 
         # Partial match
-        for device in devices:
+        for device in devices.values():
             status = device.status()
             if name_lower in status.get("name", "").lower():
                 return device

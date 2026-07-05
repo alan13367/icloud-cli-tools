@@ -89,7 +89,26 @@ class AuthManager:
     def _handle_2fa(self) -> bool:
         """Handle two-factor authentication (trusted device code)."""
         info("Two-factor authentication required.")
-        info("A verification code has been sent to your trusted devices.")
+
+        try:
+            self._api.request_2fa_code()
+        except Exception as e:
+            error(f"Failed to trigger 2FA delivery: {e}")
+            return False
+
+        method = self._api.two_factor_delivery_method
+        notice = self._api.two_factor_delivery_notice
+
+        if method == "trusted_device":
+            info("Approve the sign-in request on your trusted device.")
+            info("Enter the 6-digit code shown after you approve.")
+        elif method == "sms":
+            info("A verification code has been sent via SMS.")
+        else:
+            info("A verification code has been sent to your trusted devices.")
+
+        if notice:
+            warning(notice)
 
         code = click.prompt("Enter 2FA code")
 
@@ -99,7 +118,6 @@ class AuthManager:
                 error("Invalid 2FA code.")
                 return False
 
-            # Trust this session
             if not self._api.is_trusted_session:
                 info("Trusting this session...")
                 self._api.trust_session()
