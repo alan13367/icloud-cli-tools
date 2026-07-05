@@ -227,6 +227,62 @@ def reminders_add(
         error("Failed to create reminder.")
 
 
+@reminders.group("lists")
+def reminders_lists():
+    """Manage reminder lists."""
+    pass
+
+
+@reminders_lists.command("list")
+@pass_context
+def reminders_lists_list(ctx: AppContext):
+    """List reminder lists."""
+    from icloud_cli.services.reminders import RemindersService
+
+    service = RemindersService(ctx.auth.api, ctx.config)
+    items = service.list_reminder_lists()
+    render(items, format=ctx.format, title="Reminder Lists",
+           columns=["title", "count", "color", "id"])
+
+
+@reminders_lists.command("create")
+@click.argument("name")
+@click.option("--color", default="blue", help="List color.")
+@pass_context
+def reminders_lists_create(ctx: AppContext, name: str, color: str):
+    """Create a reminder list."""
+    from icloud_cli.services.reminders import RemindersService
+
+    service = RemindersService(ctx.auth.api, ctx.config)
+    list_id = service.create_list(name, color=color)
+    if list_id:
+        success(f"Reminder list '{name}' created.")
+    else:
+        error(f"Failed to create reminder list '{name}'.")
+
+
+@reminders.group("sections")
+def reminders_sections():
+    """Manage reminder list sections."""
+    pass
+
+
+@reminders_sections.command("create")
+@click.argument("list_name")
+@click.argument("section_name")
+@pass_context
+def reminders_sections_create(ctx: AppContext, list_name: str, section_name: str):
+    """Create a section in a reminder list."""
+    from icloud_cli.services.reminders import RemindersService
+
+    service = RemindersService(ctx.auth.api, ctx.config)
+    section_id = service.create_section(list_name=list_name, section_name=section_name)
+    if section_id:
+        success(f"Reminder section '{section_name}' created.")
+    else:
+        error(f"Failed to create reminder section '{section_name}'.")
+
+
 @reminders.command("complete")
 @click.argument("reminder_id")
 @pass_context
