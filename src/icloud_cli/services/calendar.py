@@ -49,7 +49,11 @@ def _format_datetime(dt: Any) -> str:
     if isinstance(dt, datetime):
         return dt.strftime("%Y-%m-%d %H:%M")
     if isinstance(dt, list) and len(dt) >= 4:
-        # iCloud format: [packed, year, month, day, hour, minute, tz_offset_minutes]
+        # Calendar events come back as Apple's raw, packed-first list
+        # (pyicloud's get_events passes the response through untransformed):
+        #   [packed_str, year, month, day, hour, minute, tz_offset_minutes]
+        # (Reminders use pyicloud's typed API and return datetimes, not lists,
+        # so this function only ever sees the packed-first calendar shape.)
         try:
             parsed = datetime(
                 dt[1],
@@ -215,6 +219,11 @@ class CalendarService:
                 end_date=end_dt,
                 location=location or "",
             )
+            if description:
+                # pyicloud's EventObject has no notes/description field, so notes
+                # cannot be persisted. Warn rather than dropping them silently.
+                from icloud_cli.output import warning
+                warning("Event notes are not supported by the backend and were not saved.")
             self.api.calendar.add_event(event_obj)
             return True
         except Exception as e:

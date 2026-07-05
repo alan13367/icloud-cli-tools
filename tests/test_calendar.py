@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from pyicloud.services.calendar import EventObject
 
@@ -59,6 +59,10 @@ class TestFormatDatetime:
 
     def test_format_none(self):
         assert _format_datetime(None) == ""
+
+    def test_format_list_packed_first(self):
+        # Apple's raw calendar shape: [packed_str, year, month, day, hour, minute, tz]
+        assert _format_datetime(["20250704", 2025, 7, 4, 10, 30, 480]) == "2025-07-04 10:30"
 
 
 class TestCalendarService:
@@ -121,6 +125,25 @@ class TestCalendarService:
         assert isinstance(event_obj, EventObject)
         assert event_obj.pguid == "cal-1"
         assert event_obj.title == "Lunch"
+
+    def test_add_event_warns_on_unsupported_notes(self, mock_api, mock_config):
+        mock_api.calendar.get_calendars.return_value = [
+            {"guid": "cal-1", "title": "Personal"}
+        ]
+        service = CalendarService(mock_api, mock_config)
+
+        with patch("icloud_cli.output.warning") as mock_warning:
+            ok = service.add_event(
+                title="Lunch",
+                start="2025-06-15 12:00",
+                end="2025-06-15 13:00",
+                description="remember to bring slides",
+            )
+
+        # The event is still created; the user is warned that notes are dropped.
+        assert ok is True
+        mock_api.calendar.add_event.assert_called_once()
+        mock_warning.assert_called_once()
 
     def test_delete_event_success(self, mock_api, mock_config):
         mock_api.calendar.get_events.return_value = [
