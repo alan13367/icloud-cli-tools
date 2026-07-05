@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from icloud_cli.services.reminders import RemindersService, _format_due_date
 

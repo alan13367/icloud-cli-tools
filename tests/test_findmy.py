@@ -8,7 +8,11 @@ from icloud_cli.services.findmy import FindMyService
 
 
 def _make_mock_device(name="iPhone", model="iPhone 15", battery=0.85, lat=40.7128, lon=-74.0060):
-    """Create a mock device."""
+    """Create a mock device.
+
+    Mirrors pyicloud >=2.5 ``AppleDevice``: ``status()`` is a method while
+    ``location`` is a property (an attribute, not a call).
+    """
     device = MagicMock()
     device.status.return_value = {
         "name": name,
@@ -16,7 +20,7 @@ def _make_mock_device(name="iPhone", model="iPhone 15", battery=0.85, lat=40.712
         "batteryLevel": battery,
         "deviceStatus": "Online",
     }
-    device.location.return_value = {
+    device.location = {
         "latitude": lat,
         "longitude": lon,
         "horizontalAccuracy": 10,
@@ -25,11 +29,18 @@ def _make_mock_device(name="iPhone", model="iPhone 15", battery=0.85, lat=40.712
     return device
 
 
+def _make_devices(*devices):
+    """Wrap devices in the guid-keyed dict pyicloud exposes as ``api.devices``."""
+    return {f"guid-{i}": device for i, device in enumerate(devices)}
+
+
 class TestFindMyService:
     """Tests for FindMyService with mocked API."""
 
     def test_list_devices(self, mock_api):
-        mock_api.devices = [_make_mock_device(), _make_mock_device("MacBook", "MacBook Pro", 0.62)]
+        mock_api.devices = _make_devices(
+            _make_mock_device(), _make_mock_device("MacBook", "MacBook Pro", 0.62)
+        )
         service = FindMyService(mock_api)
         devices = service.list_devices()
 
@@ -39,12 +50,12 @@ class TestFindMyService:
         assert devices[1]["name"] == "MacBook"
 
     def test_list_devices_empty(self, mock_api):
-        mock_api.devices = []
+        mock_api.devices = _make_devices()
         service = FindMyService(mock_api)
         assert service.list_devices() == []
 
     def test_locate_device_found(self, mock_api):
-        mock_api.devices = [_make_mock_device()]
+        mock_api.devices = _make_devices(_make_mock_device())
         service = FindMyService(mock_api)
         result = service.locate_device("iPhone")
 
@@ -53,12 +64,12 @@ class TestFindMyService:
         assert "google.com/maps" in result["maps_url"]
 
     def test_locate_device_not_found(self, mock_api):
-        mock_api.devices = []
+        mock_api.devices = _make_devices()
         service = FindMyService(mock_api)
         assert service.locate_device("NonExistent") is None
 
     def test_locate_device_partial_match(self, mock_api):
-        mock_api.devices = [_make_mock_device("Alan's iPhone 15 Pro")]
+        mock_api.devices = _make_devices(_make_mock_device("Alan's iPhone 15 Pro"))
         service = FindMyService(mock_api)
         result = service.locate_device("iphone")
 
@@ -67,20 +78,20 @@ class TestFindMyService:
 
     def test_play_sound(self, mock_api):
         device = _make_mock_device()
-        mock_api.devices = [device]
+        mock_api.devices = _make_devices(device)
         service = FindMyService(mock_api)
 
         assert service.play_sound("iPhone") is True
         device.play_sound.assert_called_once()
 
     def test_play_sound_not_found(self, mock_api):
-        mock_api.devices = []
+        mock_api.devices = _make_devices()
         service = FindMyService(mock_api)
         assert service.play_sound("NonExistent") is False
 
     def test_lost_mode(self, mock_api):
         device = _make_mock_device()
-        mock_api.devices = [device]
+        mock_api.devices = _make_devices(device)
         service = FindMyService(mock_api)
 
         assert service.lost_mode("iPhone", phone="123456", message="Lost!") is True
