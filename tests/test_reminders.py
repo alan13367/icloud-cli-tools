@@ -84,6 +84,14 @@ class TestParseDueDate:
         assert all_day is False
         assert (due.hour, due.minute) == (0, 0)
 
+    def test_year_omitted_defaults_to_current_year(self):
+        # Regression: a date without a year should fall back to the current
+        # year, not a hardcoded one.
+        due, all_day = _parse_due_date("June 15")
+        assert all_day is True
+        assert due.year == datetime.now().year
+        assert (due.month, due.day) == (6, 15)
+
 
 class TestRemindersService:
     """Tests for RemindersService with mocked API."""
@@ -140,6 +148,32 @@ class TestRemindersService:
         assert result[0]["title"] == "Buy groceries"
         assert result[0]["list"] == "Personal"
         assert result[0]["priority"] == "High"
+
+    def test_list_reminders_all_day_omits_time(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+
+        reminder = self._make_reminder_model(due_date=datetime(2025, 6, 15, 12, 0))
+        reminder.all_day = True
+        mock_api.reminders.reminders.return_value = [reminder]
+
+        service = self._make_service(mock_api, mock_config)
+        result = service.list_reminders()
+
+        assert result[0]["due_date"] == "2025-06-15"
+
+    def test_list_reminders_timed_shows_time(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+
+        reminder = self._make_reminder_model(due_date=datetime(2025, 6, 15, 9, 30))
+        reminder.all_day = False
+        mock_api.reminders.reminders.return_value = [reminder]
+
+        service = self._make_service(mock_api, mock_config)
+        result = service.list_reminders()
+
+        assert result[0]["due_date"] == "2025-06-15 09:30"
 
     def test_list_reminders_filters_completed(self, mock_api, mock_config):
         lst = self._make_list_model(list_id="list-1", title="Work")

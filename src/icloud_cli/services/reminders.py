@@ -357,26 +357,25 @@ class RemindersService:
             return False
 
 
-# Two default datetimes with no overlapping time fields. Parsing the same
-# string against both reveals which time components the user actually typed:
-# any field that differs between the results was filled from the default and
-# was therefore absent from the input.
-_DUE_DEFAULT_A = datetime(2000, 1, 1, 0, 0, 0)
-_DUE_DEFAULT_B = datetime(2000, 1, 1, 23, 59, 58)
-
-
 def _parse_due_date(due_date: str) -> tuple[datetime, bool]:
     """Parse a due-date string, detecting whether a time was supplied.
 
     Returns a ``(datetime, all_day)`` tuple. When the input carries no time
-    component the reminder is treated as all-day and anchored to noon UTC, so
-    the stored calendar date stays stable regardless of the viewer's time zone.
+    component the reminder is treated as all-day and anchored to noon so the
+    stored calendar date stays stable across time zones (pyicloud persists a
+    naive datetime as UTC).
+
+    Date fields the user omits fall back to today, matching ``dateutil``'s
+    default. The two parse defaults share the same date and differ only in
+    their time fields, so a time the user actually typed resolves identically
+    against both while a time left to the default does not -- that is what
+    distinguishes a bare date from a timed one.
     """
-    parsed_a = dateutil_parser.parse(due_date, default=_DUE_DEFAULT_A)
-    parsed_b = dateutil_parser.parse(due_date, default=_DUE_DEFAULT_B)
-    # A field the user actually typed resolves the same against both defaults;
-    # a field left to the default differs (the two defaults share no time
-    # fields). The user supplied a time if any of hour/minute/second matches.
+    today = datetime.now()
+    default_a = today.replace(hour=0, minute=0, second=0, microsecond=0)
+    default_b = today.replace(hour=23, minute=59, second=58, microsecond=0)
+    parsed_a = dateutil_parser.parse(due_date, default=default_a)
+    parsed_b = dateutil_parser.parse(due_date, default=default_b)
     has_time = (
         parsed_a.hour == parsed_b.hour
         or parsed_a.minute == parsed_b.minute
@@ -401,7 +400,7 @@ def _format_due_date(due_date: Any, date_only: bool = False) -> str:
             return dt.strftime(fmt)
         except (ValueError, TypeError):
             return due_date
-    if isinstance(due_date, list) and len(due_date) >= 4:
+    if isinstance(due_date, list) and len(due_date) >= 5:
         # iCloud format: [year, month, day, hour, minute]
         try:
             date_part = f"{due_date[0]:04d}-{due_date[1]:02d}-{due_date[2]:02d}"
