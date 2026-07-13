@@ -206,7 +206,13 @@ def reminders_list(ctx: AppContext, list_name: str | None, completed: bool):
 
 @reminders.command("add")
 @click.option("--title", "-t", required=True, help="Reminder title.")
-@click.option("--due", "-d", default=None, help="Due date (YYYY-MM-DD or YYYY-MM-DD HH:MM).")
+@click.option(
+    "--due",
+    "-d",
+    default=None,
+    help="Due date. A bare date (YYYY-MM-DD) creates an all-day reminder; "
+    "add a time (YYYY-MM-DD HH:MM) for a timed reminder.",
+)
 @click.option("--list", "-l", "list_name", default=None, help="Reminder list name.")
 @click.option("--description", default=None, help="Reminder description.")
 @pass_context
