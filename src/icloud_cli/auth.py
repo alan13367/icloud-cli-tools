@@ -87,46 +87,64 @@ class AuthManager:
         return True
 
     def _handle_2fa(self) -> bool:
-        """Handle two-factor authentication (trusted device code)."""
+        """Handle two-factor authentication (HSA2 trusted device or SMS code)."""
         info("Two-factor authentication required.")
 
         try:
-            self._api.request_2fa_code()
+            delivered = self._api.request_2fa_code()
         except Exception as e:
             error(f"Failed to trigger 2FA delivery: {e}")
             return False
 
+        if not delivered:
+            # request_2fa_code() returns False only when Apple wants a hardware
+            # security key (or offers no code-delivery channel at all), which
+            # this CLI cannot drive. Don't prompt for a code that never arrives.
+            error(
+                "This 2FA challenge requires a hardware security key, "
+                "which icloud-cli does not support."
+            )
+            return False
+
+        # Describe the channel we'll actually validate against. validate_2fa_code()
+        # keys off two_factor_delivery_method, so the prompt must match it — telling
+        # the user to enter the SMS code when we're verifying the trusted-device
+        # code (or vice versa) is what made the old prompt misleading.
         method = self._api.two_factor_delivery_method
         notice = self._api.two_factor_delivery_notice
 
-        if method == "trusted_device":
-            info("Approve the sign-in request on your trusted device.")
-            info("Enter the 6-digit code shown after you approve.")
-        elif method == "sms":
-            info("A verification code has been sent via SMS.")
+        if method == "sms":
+            info("Apple sent a 6-digit verification code by SMS.")
+            info("Enter the code from the text message.")
         else:
-            info("A verification code has been sent to your trusted devices.")
+            info("Apple sent a 6-digit verification code to your trusted devices.")
+            info("Enter the code shown in the trusted-device notification.")
 
         if notice:
             warning(notice)
 
-        code = click.prompt("Enter 2FA code")
-
-        try:
-            result = self._api.validate_2fa_code(code)
-            if not result:
-                error("Invalid 2FA code.")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            code = click.prompt("Enter 2FA code")
+            try:
+                if self._api.validate_2fa_code(code):
+                    break
+            except Exception as e:
+                error(f"2FA verification failed: {e}")
                 return False
 
-            if not self._api.is_trusted_session:
-                info("Trusting this session...")
-                self._api.trust_session()
+            remaining = max_attempts - attempt - 1
+            if remaining <= 0:
+                error("Invalid 2FA code.")
+                return False
+            warning(f"Invalid 2FA code. {remaining} attempt(s) remaining.")
 
-            success("2FA verification successful!")
-            return True
-        except Exception as e:
-            error(f"2FA verification failed: {e}")
-            return False
+        if not self._api.is_trusted_session:
+            info("Trusting this session...")
+            self._api.trust_session()
+
+        success("2FA verification successful!")
+        return True
 
     def _handle_2sa(self) -> bool:
         """Handle two-step authentication (SMS/phone-based)."""
