@@ -3,7 +3,7 @@
 Provides CRUD operations for iCloud Reminders via pyicloud.
 
 Supports cursor-based incremental sync: the first call does a full CloudKit sync.
-Subsequent calls use iter_changes(since=cursor) to fetch only changes. 
+Subsequent calls use iter_changes(since=cursor) to fetch only changes.
 State is persisted under config.cache_dir/reminders/.
 """
 
@@ -44,7 +44,7 @@ class RemindersService:
     ) -> list[dict[str, Any]]:
         """List reminders with cursor-based incremental sync.
 
-        First call triggers a full CloudKit sync (~5 min for 200 reminders). 
+        First call triggers a full CloudKit sync (~5 min for 200 reminders).
         Subsequent calls fetch only changes since the last cursor (~1s).
 
         Args:
@@ -120,7 +120,9 @@ class RemindersService:
             for change in self._reminders_service.iter_changes(since=None):
                 r = change.reminder
                 if r and not r.deleted and not r.completed:
-                    cached_data.append(self._reminder_to_entry(r, list_map.get(r.list_id, r.list_id)))
+                    cached_data.append(
+                        self._reminder_to_entry(r, list_map.get(r.list_id, r.list_id))
+                    )
 
         # Persist state for next call
         try:
