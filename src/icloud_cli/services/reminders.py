@@ -1,6 +1,10 @@
 """Reminders service for icloud-cli.
 
 Provides CRUD operations for iCloud Reminders via pyicloud.
+
+Supports cursor-based incremental sync: the first call does a full CloudKit sync.
+Subsequent calls use iter_changes(since=cursor) to fetch only changes. 
+State is persisted under config.cache_dir/reminders/.
 """
 
 from __future__ import annotations
@@ -9,6 +13,7 @@ import json
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from dateutil import parser as dateutil_parser
@@ -25,12 +30,22 @@ class RemindersService:
         self.config = config
         self._reminders_service = api.reminders
 
+        # Cursor-based incremental sync state
+        self._cache_dir = Path(config.cache_dir) / "reminders"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cursor_file = self._cache_dir / "cursor.txt"
+        self._data_file = self._cache_dir / "data.json"
+        self._lists_file = self._cache_dir / "lists.json"
+
     def list_reminders(
         self,
         list_name: str | None = None,
         show_completed: bool = False,
     ) -> list[dict[str, Any]]:
-        """List reminders, optionally filtered by list.
+        """List reminders with cursor-based incremental sync.
+
+        First call triggers a full CloudKit sync (~5 min for 200 reminders). 
+        Subsequent calls fetch only changes since the last cursor (~1s).
 
         Args:
             list_name: Filter to specific reminder list.
@@ -39,44 +54,91 @@ class RemindersService:
         Returns:
             List of reminder dictionaries.
         """
+
+        # Load persisted state
+        cursor = self._cursor_file.read_text().strip() if self._cursor_file.exists() else None
+        cached_data: list[dict[str, Any]] = []
+        if self._data_file.exists():
+            try:
+                cached_data = json.loads(self._data_file.read_text())
+            except (json.JSONDecodeError, TypeError):
+                cached_data = []
+        list_map: dict[str, str] = {}
+        if self._lists_file.exists():
+            try:
+                list_map = json.loads(self._lists_file.read_text())
+            except (json.JSONDecodeError, TypeError):
+                list_map = {}
+
+        full_sync_needed = not cursor or not cached_data or not list_map
+
+        if not full_sync_needed:
+            # Incremental: fetch only changes since last cursor
+            try:
+                data_map = {r["id"]: r for r in cached_data}
+                changed = False
+
+                for change in self._reminders_service.iter_changes(since=cursor):
+                    changed = True
+                    rid = change.reminder_id
+
+                    if change.type == "deleted":
+                        data_map.pop(rid, None)
+                        continue
+
+                    r = change.reminder
+                    if not r or r.deleted:
+                        data_map.pop(rid, None)
+                        continue
+
+                    list_title = list_map.get(r.list_id, r.list_id)
+                    if r.completed:
+                        data_map.pop(rid, None)
+                    else:
+                        data_map[rid] = self._reminder_to_entry(r, list_title)
+
+                if changed:
+                    cached_data = list(data_map.values())
+
+            except Exception:
+                # Cursor invalid or zone state mismatch - try full sync
+                full_sync_needed = True
+
+        if full_sync_needed:
+            # Full sync - uses iter_changes(since=None) for zone-wide fetch
+            try:
+                rlists = list(self._reminders_service.lists())
+            except Exception as e:
+                from icloud_cli.output import error
+                error(f"Failed to fetch reminders: {e}")
+                return []
+
+            list_map = {lst.id: lst.title for lst in rlists}
+            self._lists_file.write_text(json.dumps(list_map, indent=2))
+
+            cached_data = []
+            for change in self._reminders_service.iter_changes(since=None):
+                r = change.reminder
+                if r and not r.deleted and not r.completed:
+                    cached_data.append(self._reminder_to_entry(r, list_map.get(r.list_id, r.list_id)))
+
+        # Persist state for next call
         try:
-            lists = list(self._reminders_service.lists())
-        except Exception as e:
-            from icloud_cli.output import error
-            error(f"Failed to fetch reminders: {e}")
-            return []
+            new_cursor = self._reminders_service.sync_cursor()
+            if new_cursor:
+                self._cursor_file.write_text(new_cursor)
+            self._data_file.write_text(json.dumps(cached_data, indent=2))
+        except Exception:
+            pass  # Non-critical - next run will full sync
 
+        # Filter & return
         result = []
-        for rlist in lists:
-            rlist_title = rlist.title
-            rlist_id = rlist.id
-
-            if list_name and rlist_title.lower() != list_name.lower():
+        for entry in cached_data:
+            if list_name and entry["list"].lower() != list_name.lower():
                 continue
-
-            reminders = list(self._reminders_service.reminders(list_id=rlist_id))
-
-            for reminder in reminders:
-                if not show_completed and reminder.completed:
-                    continue
-
-                due_date = ""
-                if reminder.due_date:
-                    due_date = _format_due_date(reminder.due_date)
-
-                priority_map = {0: "", 1: "High", 5: "Medium", 9: "Low"}
-                priority = priority_map.get(reminder.priority, "")
-
-                result.append({
-                    "id": reminder.id,
-                    "title": reminder.title,
-                    "list": rlist_title,
-                    "due_date": due_date,
-                    "priority": priority,
-                    "completed": "✓" if reminder.completed else "",
-                    "description": reminder.desc,
-                })
-
+            if not show_completed and entry["completed"]:
+                continue
+            result.append(entry)
         return result
 
     def list_reminder_lists(self) -> list[dict[str, Any]]:
@@ -272,6 +334,23 @@ class RemindersService:
             from icloud_cli.output import error
             error(f"Failed to create reminder: {e}")
             return False
+
+    @staticmethod
+    def _reminder_to_entry(r, list_title: str) -> dict[str, Any]:
+        """Convert a pyicloud Reminder model to the icloud-cli dict format."""
+        priority_map = {0: "", 1: "High", 5: "Medium", 9: "Low"}
+        due_date = ""
+        if r.due_date:
+            due_date = _format_due_date(r.due_date)
+        return {
+            "id": r.id,
+            "title": r.title,
+            "list": list_title,
+            "due_date": due_date,
+            "priority": priority_map.get(r.priority, ""),
+            "completed": "✓" if r.completed else "",
+            "description": r.desc,
+        }
 
     def _find_list_id(self, list_name: str) -> str | None:
         for rlist in self._reminders_service.lists():
