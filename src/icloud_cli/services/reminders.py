@@ -92,10 +92,7 @@ class RemindersService:
                         continue
 
                     list_title = list_map.get(r.list_id, r.list_id)
-                    if r.completed:
-                        data_map.pop(rid, None)
-                    else:
-                        data_map[rid] = self._reminder_to_entry(r, list_title)
+                    data_map[rid] = self._reminder_to_entry(r, list_title)
 
                 if changed:
                     cached_data = list(data_map.values())
@@ -119,7 +116,7 @@ class RemindersService:
             cached_data = []
             for change in self._reminders_service.iter_changes(since=None):
                 r = change.reminder
-                if r and not r.deleted and not r.completed:
+                if r and not r.deleted:
                     cached_data.append(
                         self._reminder_to_entry(r, list_map.get(r.list_id, r.list_id))
                     )
