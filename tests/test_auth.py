@@ -115,6 +115,7 @@ class TestHandle2FA:
         """When request_2fa_code() returns False, no code is requested."""
         api = MagicMock()
         api.request_2fa_code.return_value = False
+        api.two_factor_delivery_method = "security_key"
         auth = self._make_auth(tmp_path, api)
 
         assert auth._handle_2fa() is False
@@ -122,6 +123,23 @@ class TestHandle2FA:
         # No code should be prompted for or validated when nothing was delivered.
         mock_click.prompt.assert_not_called()
         api.validate_2fa_code.assert_not_called()
+
+    @patch("icloud_cli.auth.error")
+    @patch("icloud_cli.auth.click")
+    def test_missing_delivery_channel_has_accurate_error(
+        self, mock_click, mock_error, tmp_path
+    ):
+        """A missing delivery route is not misreported as a security-key challenge."""
+        api = MagicMock()
+        api.request_2fa_code.return_value = False
+        api.two_factor_delivery_method = "unknown"
+        auth = self._make_auth(tmp_path, api)
+
+        assert auth._handle_2fa() is False
+        message = str(mock_error.call_args.args[0]).lower()
+        assert "delivery channel" in message
+        assert "hardware security key" not in message
+        mock_click.prompt.assert_not_called()
 
     @patch("icloud_cli.auth.click")
     def test_trusted_device_success(self, mock_click, tmp_path):

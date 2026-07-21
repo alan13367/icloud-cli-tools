@@ -97,13 +97,19 @@ class AuthManager:
             return False
 
         if not delivered:
-            # request_2fa_code() returns False only when Apple wants a hardware
-            # security key (or offers no code-delivery channel at all), which
-            # this CLI cannot drive. Don't prompt for a code that never arrives.
-            error(
-                "This 2FA challenge requires a hardware security key, "
-                "which icloud-cli does not support."
-            )
+            # Don't prompt for a code that never arrived. pyicloud identifies
+            # hardware-key challenges explicitly; a false return with any
+            # other method means Apple offered no supported delivery channel.
+            if self._api.two_factor_delivery_method == "security_key":
+                error(
+                    "This 2FA challenge requires a hardware security key, "
+                    "which icloud-cli does not support."
+                )
+            else:
+                error(
+                    "Apple did not offer a supported 2FA code-delivery channel. "
+                    "Check that your account has a trusted device or phone number."
+                )
             return False
 
         # Describe the channel we'll actually validate against. validate_2fa_code()
