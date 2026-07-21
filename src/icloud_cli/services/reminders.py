@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,9 +34,7 @@ class RemindersService:
         # Cursor-based incremental sync state
         self._cache_dir = Path(config.cache_dir) / "reminders"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cursor_file = self._cache_dir / "cursor.txt"
-        self._data_file = self._cache_dir / "data.json"
-        self._lists_file = self._cache_dir / "lists.json"
+        self._state_file = self._cache_dir / "state.json"
 
     def list_reminders(
         self,
@@ -55,90 +54,121 @@ class RemindersService:
             List of reminder dictionaries.
         """
 
-        # Load persisted state
-        cursor = self._cursor_file.read_text().strip() if self._cursor_file.exists() else None
-        cached_data: list[dict[str, Any]] = []
-        if self._data_file.exists():
-            try:
-                cached_data = json.loads(self._data_file.read_text())
-            except (json.JSONDecodeError, TypeError):
-                cached_data = []
-        list_map: dict[str, str] = {}
-        if self._lists_file.exists():
-            try:
-                list_map = json.loads(self._lists_file.read_text())
-            except (json.JSONDecodeError, TypeError):
-                list_map = {}
+        state = self._load_sync_state()
 
-        full_sync_needed = not cursor or not cached_data or not list_map
-
-        if not full_sync_needed:
-            # Incremental: fetch only changes since last cursor
-            try:
-                data_map = {r["id"]: r for r in cached_data}
-                changed = False
-
-                for change in self._reminders_service.iter_changes(since=cursor):
-                    changed = True
-                    rid = change.reminder_id
-
-                    if change.type == "deleted":
-                        data_map.pop(rid, None)
-                        continue
-
-                    r = change.reminder
-                    if not r or r.deleted:
-                        data_map.pop(rid, None)
-                        continue
-
-                    list_title = list_map.get(r.list_id, r.list_id)
-                    data_map[rid] = self._reminder_to_entry(r, list_title)
-
-                if changed:
-                    cached_data = list(data_map.values())
-
-            except Exception:
-                # Cursor invalid or zone state mismatch - try full sync
-                full_sync_needed = True
-
-        if full_sync_needed:
-            # Full sync - uses iter_changes(since=None) for zone-wide fetch
-            try:
-                rlists = list(self._reminders_service.lists())
-            except Exception as e:
-                from icloud_cli.output import error
-                error(f"Failed to fetch reminders: {e}")
-                return []
-
-            list_map = {lst.id: lst.title for lst in rlists}
-            self._lists_file.write_text(json.dumps(list_map, indent=2))
-
-            cached_data = []
-            for change in self._reminders_service.iter_changes(since=None):
-                r = change.reminder
-                if r and not r.deleted:
-                    cached_data.append(
-                        self._reminder_to_entry(r, list_map.get(r.list_id, r.list_id))
-                    )
-
-        # Persist state for next call
         try:
-            new_cursor = self._reminders_service.sync_cursor()
-            if new_cursor:
-                self._cursor_file.write_text(new_cursor)
-            self._data_file.write_text(json.dumps(cached_data, indent=2))
-        except Exception:
-            pass  # Non-critical - next run will full sync
+            rlists = list(self._reminders_service.lists())
+            list_map = {lst.id: lst.title for lst in rlists}
 
-        # Filter & return
+            # Capture an upper bound before reading any reminder records. If a
+            # change arrives while the read is in progress, keeping this older
+            # cursor makes the next invocation replay that change safely.
+            next_cursor = self._reminders_service.sync_cursor()
+
+            if state is None:
+                data_map = self._full_reminder_snapshot(rlists, list_map)
+            else:
+                cursor, cached_data = state
+                data_map = {entry["id"]: entry for entry in cached_data}
+
+                # List changes are not emitted by iter_changes(), so refresh
+                # cached display names from the lightweight list snapshot.
+                for entry in data_map.values():
+                    entry_list_id = entry.get("list_id")
+                    if entry_list_id:
+                        entry["list"] = list_map.get(entry_list_id, entry_list_id)
+
+                try:
+                    for change in self._reminders_service.iter_changes(since=cursor):
+                        reminder_id = change.reminder_id
+                        reminder = change.reminder
+                        if change.type == "deleted" or not reminder or reminder.deleted:
+                            data_map.pop(reminder_id, None)
+                            continue
+
+                        list_title = list_map.get(reminder.list_id, reminder.list_id)
+                        data_map[reminder_id] = self._reminder_to_entry(
+                            reminder, list_title
+                        )
+                except Exception:
+                    # An expired or account-mismatched cursor requires a fresh
+                    # snapshot. next_cursor was captured before this read, so
+                    # later changes will still be replayed on the next call.
+                    data_map = self._full_reminder_snapshot(rlists, list_map)
+        except Exception as e:
+            from icloud_cli.output import error
+            error(f"Failed to fetch reminders: {e}")
+            return []
+
+        cached_data = list(data_map.values())
+        # The old state remains intact on failure because replacement is
+        # atomic, so the next invocation replays from its older cursor.
+        with suppress(OSError):
+            self._write_sync_state(next_cursor, cached_data)
+
         result = []
-        for entry in cached_data:
+        for cached_entry in cached_data:
+            entry = {key: value for key, value in cached_entry.items() if key != "list_id"}
             if list_name and entry["list"].lower() != list_name.lower():
                 continue
             if not show_completed and entry["completed"]:
                 continue
             result.append(entry)
         return result
+
+    def _load_sync_state(self) -> tuple[str, list[dict[str, Any]]] | None:
+        """Load a complete cursor/data generation, or request a full sync."""
+        if not self._state_file.exists():
+            return None
+        try:
+            state = json.loads(self._state_file.read_text())
+            if state.get("version") != 1 or state.get("account") != self.config.apple_id:
+                return None
+            cursor = state["cursor"]
+            entries = state["entries"]
+            entries_are_valid = isinstance(entries, list) and all(
+                isinstance(entry, dict)
+                and isinstance(entry.get("id"), str)
+                and isinstance(entry.get("list_id"), str)
+                for entry in entries
+            )
+            if not isinstance(cursor, str) or not entries_are_valid:
+                return None
+            return cursor, entries
+        except (json.JSONDecodeError, KeyError, OSError, TypeError, AttributeError):
+            return None
+
+    def _write_sync_state(self, cursor: str, entries: list[dict[str, Any]]) -> None:
+        """Atomically persist cursor and entries as one cache generation."""
+        state = {
+            "version": 1,
+            "account": self.config.apple_id,
+            "cursor": cursor,
+            "entries": entries,
+        }
+        temp_file = self._state_file.with_name(
+            f".{self._state_file.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            temp_file.write_text(json.dumps(state, indent=2))
+            temp_file.replace(self._state_file)
+        finally:
+            if temp_file.exists():
+                temp_file.unlink()
+
+    def _full_reminder_snapshot(
+        self, rlists: list[Any], list_map: dict[str, str]
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch a complete deduplicated reminder snapshot."""
+        data_map: dict[str, dict[str, Any]] = {}
+        for rlist in rlists:
+            for reminder in self._reminders_service.reminders(list_id=rlist.id):
+                if getattr(reminder, "deleted", False):
+                    continue
+                data_map[reminder.id] = self._reminder_to_entry(
+                    reminder, list_map.get(reminder.list_id, reminder.list_id)
+                )
+        return data_map
 
     def list_reminder_lists(self) -> list[dict[str, Any]]:
         """List reminder lists."""
@@ -310,12 +340,15 @@ class RemindersService:
                 error("No reminder lists found.")
                 return False
 
-            # Parse due date
+            # Parse due date. When the user gives a bare date with no time
+            # (e.g. "2025-06-15"), create an all-day reminder so it shows the
+            # date without a "12:00 AM" time, matching the Reminders app.
             due: datetime | None = None
+            all_day = False
             if due_date:
                 try:
-                    due = dateutil_parser.parse(due_date)
-                except (ValueError, TypeError):
+                    due, all_day = _parse_due_date(due_date)
+                except (ValueError, TypeError, OverflowError):
                     from icloud_cli.output import error
                     error("Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM.")
                     return False
@@ -325,6 +358,7 @@ class RemindersService:
                 title=title,
                 desc=description or "",
                 due_date=due,
+                all_day=all_day,
                 priority=0,
             )
             return True
@@ -340,9 +374,13 @@ class RemindersService:
         priority_map = {0: "", 1: "High", 5: "Medium", 9: "Low"}
         due_date = ""
         if r.due_date:
-            due_date = _format_due_date(r.due_date)
+            due_date = _format_due_date(
+                r.due_date,
+                date_only=bool(getattr(r, "all_day", False)),
+            )
         return {
             "id": r.id,
+            "list_id": r.list_id,
             "title": r.title,
             "list": list_title,
             "due_date": due_date,
@@ -428,29 +466,66 @@ class RemindersService:
             return False
 
 
-def _format_due_date(due_date: Any) -> str:
-    """Format a due date from the API response."""
+def _parse_due_date(due_date: str) -> tuple[datetime, bool]:
+    """Parse a due-date string, detecting whether a time was supplied.
+
+    Returns a ``(datetime, all_day)`` tuple. When the input carries no time
+    component the reminder is treated as all-day and anchored to noon so the
+    stored calendar date stays stable across time zones (pyicloud persists a
+    naive datetime as UTC).
+
+    Date fields the user omits fall back to today, matching ``dateutil``'s
+    default. The two parse defaults share the same date and differ only in
+    their time fields, so a time the user actually typed resolves identically
+    against both while a time left to the default does not -- that is what
+    distinguishes a bare date from a timed one.
+    """
+    today = datetime.now()
+    default_a = today.replace(hour=0, minute=0, second=0, microsecond=0)
+    default_b = today.replace(hour=23, minute=59, second=58, microsecond=0)
+    parsed_a = dateutil_parser.parse(due_date, default=default_a)
+    parsed_b = dateutil_parser.parse(due_date, default=default_b)
+    has_time = (
+        parsed_a.hour == parsed_b.hour
+        or parsed_a.minute == parsed_b.minute
+        or parsed_a.second == parsed_b.second
+    )
+    if has_time:
+        return parsed_a, False
+    anchored = parsed_a.replace(hour=12, minute=0, second=0, microsecond=0)
+    return anchored, True
+
+
+def _format_due_date(due_date: Any, date_only: bool = False) -> str:
+    """Format a due date from the API response.
+
+    When ``date_only`` is True (all-day reminders), the time component is
+    omitted so the reminder shows just its date.
+    """
+    fmt = "%Y-%m-%d" if date_only else "%Y-%m-%d %H:%M"
     if isinstance(due_date, str):
         try:
             dt = dateutil_parser.parse(due_date)
-            return dt.strftime("%Y-%m-%d %H:%M")
+            return dt.strftime(fmt)
         except (ValueError, TypeError):
             return due_date
-    if isinstance(due_date, list) and len(due_date) >= 4:
+    if isinstance(due_date, list) and len(due_date) >= 5:
         # iCloud format: [year, month, day, hour, minute]
         try:
             date_part = f"{due_date[0]:04d}-{due_date[1]:02d}-{due_date[2]:02d}"
+            if date_only:
+                return date_part
             time_part = f"{due_date[3]:02d}:{due_date[4]:02d}"
             return f"{date_part} {time_part}"
         except (IndexError, TypeError):
             return str(due_date)
     if isinstance(due_date, (int, float)):
         try:
-            return datetime.fromtimestamp(due_date / 1000).strftime("%Y-%m-%d %H:%M")
+            return datetime.fromtimestamp(due_date / 1000).strftime(fmt)
         except (ValueError, OSError):
             return str(due_date)
     if isinstance(due_date, datetime):
-        return due_date.strftime("%Y-%m-%d %H:%M")
+        return due_date.strftime(fmt)
     return str(due_date)
 
 
