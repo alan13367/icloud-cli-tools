@@ -62,7 +62,10 @@ class RemindersService:
 
                 due_date = ""
                 if reminder.due_date:
-                    due_date = _format_due_date(reminder.due_date)
+                    due_date = _format_due_date(
+                        reminder.due_date,
+                        date_only=bool(getattr(reminder, "all_day", False)),
+                    )
 
                 priority_map = {0: "", 1: "High", 5: "Medium", 9: "Low"}
                 priority = priority_map.get(reminder.priority, "")
@@ -249,12 +252,15 @@ class RemindersService:
                 error("No reminder lists found.")
                 return False
 
-            # Parse due date
+            # Parse due date. When the user gives a bare date with no time
+            # (e.g. "2025-06-15"), create an all-day reminder so it shows the
+            # date without a "12:00 AM" time, matching the Reminders app.
             due: datetime | None = None
+            all_day = False
             if due_date:
                 try:
-                    due = dateutil_parser.parse(due_date)
-                except (ValueError, TypeError):
+                    due, all_day = _parse_due_date(due_date)
+                except (ValueError, TypeError, OverflowError):
                     from icloud_cli.output import error
                     error("Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM.")
                     return False
@@ -264,6 +270,7 @@ class RemindersService:
                 title=title,
                 desc=description or "",
                 due_date=due,
+                all_day=all_day,
                 priority=0,
             )
             return True
@@ -350,29 +357,66 @@ class RemindersService:
             return False
 
 
-def _format_due_date(due_date: Any) -> str:
-    """Format a due date from the API response."""
+def _parse_due_date(due_date: str) -> tuple[datetime, bool]:
+    """Parse a due-date string, detecting whether a time was supplied.
+
+    Returns a ``(datetime, all_day)`` tuple. When the input carries no time
+    component the reminder is treated as all-day and anchored to noon so the
+    stored calendar date stays stable across time zones (pyicloud persists a
+    naive datetime as UTC).
+
+    Date fields the user omits fall back to today, matching ``dateutil``'s
+    default. The two parse defaults share the same date and differ only in
+    their time fields, so a time the user actually typed resolves identically
+    against both while a time left to the default does not -- that is what
+    distinguishes a bare date from a timed one.
+    """
+    today = datetime.now()
+    default_a = today.replace(hour=0, minute=0, second=0, microsecond=0)
+    default_b = today.replace(hour=23, minute=59, second=58, microsecond=0)
+    parsed_a = dateutil_parser.parse(due_date, default=default_a)
+    parsed_b = dateutil_parser.parse(due_date, default=default_b)
+    has_time = (
+        parsed_a.hour == parsed_b.hour
+        or parsed_a.minute == parsed_b.minute
+        or parsed_a.second == parsed_b.second
+    )
+    if has_time:
+        return parsed_a, False
+    anchored = parsed_a.replace(hour=12, minute=0, second=0, microsecond=0)
+    return anchored, True
+
+
+def _format_due_date(due_date: Any, date_only: bool = False) -> str:
+    """Format a due date from the API response.
+
+    When ``date_only`` is True (all-day reminders), the time component is
+    omitted so the reminder shows just its date.
+    """
+    fmt = "%Y-%m-%d" if date_only else "%Y-%m-%d %H:%M"
     if isinstance(due_date, str):
         try:
             dt = dateutil_parser.parse(due_date)
-            return dt.strftime("%Y-%m-%d %H:%M")
+            return dt.strftime(fmt)
         except (ValueError, TypeError):
             return due_date
-    if isinstance(due_date, list) and len(due_date) >= 4:
+    if isinstance(due_date, list) and len(due_date) >= 5:
         # iCloud format: [year, month, day, hour, minute]
         try:
             date_part = f"{due_date[0]:04d}-{due_date[1]:02d}-{due_date[2]:02d}"
+            if date_only:
+                return date_part
             time_part = f"{due_date[3]:02d}:{due_date[4]:02d}"
             return f"{date_part} {time_part}"
         except (IndexError, TypeError):
             return str(due_date)
     if isinstance(due_date, (int, float)):
         try:
-            return datetime.fromtimestamp(due_date / 1000).strftime("%Y-%m-%d %H:%M")
+            return datetime.fromtimestamp(due_date / 1000).strftime(fmt)
         except (ValueError, OSError):
             return str(due_date)
     if isinstance(due_date, datetime):
-        return due_date.strftime("%Y-%m-%d %H:%M")
+        return due_date.strftime(fmt)
     return str(due_date)
 
 

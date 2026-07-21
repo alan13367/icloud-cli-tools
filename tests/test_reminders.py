@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from icloud_cli.services.reminders import (
     RemindersService,
     _format_due_date,
+    _parse_due_date,
     _reminders_color_payload,
 )
 
@@ -51,8 +52,45 @@ class TestFormatDueDate:
         result = _format_due_date(None)
         assert result == "None"
 
+    def test_format_date_only_omits_time(self):
+        result = _format_due_date(datetime(2025, 6, 15, 14, 30), date_only=True)
+        assert result == "2025-06-15"
+
+    def test_format_date_only_list(self):
+        result = _format_due_date([2025, 6, 15, 14, 30], date_only=True)
+        assert result == "2025-06-15"
+
     def test_color_payload_defaults_unknown_color_to_blue(self):
         assert _reminders_color_payload("wat") == _reminders_color_payload("blue")
+
+
+class TestParseDueDate:
+    """Tests for due-date parsing and all-day detection."""
+
+    def test_bare_date_is_all_day_anchored_to_noon(self):
+        due, all_day = _parse_due_date("2025-06-15")
+        assert all_day is True
+        assert (due.year, due.month, due.day) == (2025, 6, 15)
+        assert (due.hour, due.minute, due.second) == (12, 0, 0)
+
+    def test_date_with_time_is_not_all_day(self):
+        due, all_day = _parse_due_date("2025-06-15 14:30")
+        assert all_day is False
+        assert (due.hour, due.minute) == (14, 30)
+
+    def test_explicit_midnight_is_not_all_day(self):
+        # A user who explicitly types 00:00 wants a timed reminder.
+        due, all_day = _parse_due_date("2025-06-15 00:00")
+        assert all_day is False
+        assert (due.hour, due.minute) == (0, 0)
+
+    def test_year_omitted_defaults_to_current_year(self):
+        # Regression: a date without a year should fall back to the current
+        # year, not a hardcoded one.
+        due, all_day = _parse_due_date("June 15")
+        assert all_day is True
+        assert due.year == datetime.now().year
+        assert (due.month, due.day) == (6, 15)
 
 
 class TestRemindersService:
@@ -83,6 +121,7 @@ class TestRemindersService:
         r.desc = desc
         r.list_id = "list-1"
         r.flagged = False
+        r.all_day = False
         return r
 
     def test_list_reminders_empty(self, mock_api, mock_config):
@@ -109,6 +148,32 @@ class TestRemindersService:
         assert result[0]["title"] == "Buy groceries"
         assert result[0]["list"] == "Personal"
         assert result[0]["priority"] == "High"
+
+    def test_list_reminders_all_day_omits_time(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+
+        reminder = self._make_reminder_model(due_date=datetime(2025, 6, 15, 12, 0))
+        reminder.all_day = True
+        mock_api.reminders.reminders.return_value = [reminder]
+
+        service = self._make_service(mock_api, mock_config)
+        result = service.list_reminders()
+
+        assert result[0]["due_date"] == "2025-06-15"
+
+    def test_list_reminders_timed_shows_time(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+
+        reminder = self._make_reminder_model(due_date=datetime(2025, 6, 15, 9, 30))
+        reminder.all_day = False
+        mock_api.reminders.reminders.return_value = [reminder]
+
+        service = self._make_service(mock_api, mock_config)
+        result = service.list_reminders()
+
+        assert result[0]["due_date"] == "2025-06-15 09:30"
 
     def test_list_reminders_filters_completed(self, mock_api, mock_config):
         lst = self._make_list_model(list_id="list-1", title="Work")
@@ -141,6 +206,45 @@ class TestRemindersService:
         service = self._make_service(mock_api, mock_config)
         assert service.add_reminder(title="New task") is True
         mock_api.reminders.create.assert_called_once()
+
+    def test_add_reminder_bare_date_is_all_day(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+        mock_api.reminders.create.return_value = MagicMock()
+
+        service = self._make_service(mock_api, mock_config)
+        assert service.add_reminder(title="Pay rent", due_date="2025-06-15") is True
+
+        call_kwargs = mock_api.reminders.create.call_args[1]
+        assert call_kwargs["all_day"] is True
+        assert call_kwargs["due_date"].hour == 12
+        assert (
+            call_kwargs["due_date"].year,
+            call_kwargs["due_date"].month,
+            call_kwargs["due_date"].day,
+        ) == (2025, 6, 15)
+
+    def test_add_reminder_with_time_is_not_all_day(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+        mock_api.reminders.create.return_value = MagicMock()
+
+        service = self._make_service(mock_api, mock_config)
+        assert (
+            service.add_reminder(title="Standup", due_date="2025-06-15 09:30") is True
+        )
+
+        call_kwargs = mock_api.reminders.create.call_args[1]
+        assert call_kwargs["all_day"] is False
+        assert (call_kwargs["due_date"].hour, call_kwargs["due_date"].minute) == (9, 30)
+
+    def test_add_reminder_invalid_date_returns_false(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+
+        service = self._make_service(mock_api, mock_config)
+        assert service.add_reminder(title="Bad", due_date="not-a-date") is False
+        mock_api.reminders.create.assert_not_called()
 
     def test_add_reminder_with_list_name(self, mock_api, mock_config):
         lst1 = self._make_list_model(list_id="list-1", title="Personal")

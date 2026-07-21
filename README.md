@@ -84,7 +84,8 @@ icloud-cli calendar delete <event-id>
 ```bash
 icloud-cli reminders list                   # All active reminders
 icloud-cli reminders list --list "Shopping" --completed
-icloud-cli reminders add -t "Buy milk" -d "2025-06-15" -l "Shopping"
+icloud-cli reminders add -t "Buy milk" -d "2025-06-15" -l "Shopping"   # bare date -> all-day reminder
+icloud-cli reminders add -t "Standup" -d "2025-06-15 09:30"            # date + time -> timed reminder
 icloud-cli reminders complete <reminder-id>
 icloud-cli reminders delete <reminder-id>
 ```
