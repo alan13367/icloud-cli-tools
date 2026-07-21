@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from icloud_cli.services.reminders import (
     RemindersService,
     _format_due_date,
@@ -97,6 +99,8 @@ class TestRemindersService:
     """Tests for RemindersService with mocked API."""
 
     def _make_service(self, mock_api, mock_config):
+        mock_api.reminders.sync_cursor.return_value = "cursor-1"
+        mock_api.reminders.iter_changes.return_value = []
         return RemindersService(mock_api, mock_config)
 
     def _make_list_model(self, list_id="list-1", title="Personal"):
@@ -122,7 +126,15 @@ class TestRemindersService:
         r.list_id = "list-1"
         r.flagged = False
         r.all_day = False
+        r.deleted = False
         return r
+
+    def _make_change(self, reminder=None, change_type="updated", reminder_id=None):
+        change = MagicMock()
+        change.type = change_type
+        change.reminder = reminder
+        change.reminder_id = reminder_id or reminder.id
+        return change
 
     def test_list_reminders_empty(self, mock_api, mock_config):
         mock_api.reminders.lists.return_value = []
@@ -197,6 +209,92 @@ class TestRemindersService:
         # With completed
         result = service.list_reminders(show_completed=True)
         assert len(result) == 2
+
+    def test_empty_snapshot_uses_incremental_sync_next_time(self, mock_api, mock_config):
+        mock_api.reminders.lists.return_value = []
+        service = self._make_service(mock_api, mock_config)
+
+        assert service.list_reminders() == []
+        assert service.list_reminders() == []
+
+        mock_api.reminders.iter_changes.assert_called_once_with(since="cursor-1")
+
+    def test_incremental_sync_applies_updates_and_deletions(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+        old = self._make_reminder_model(reminder_id="rem-1", title="Old title")
+        removed = self._make_reminder_model(reminder_id="rem-2", title="Remove me")
+        mock_api.reminders.reminders.return_value = [old, removed]
+        service = self._make_service(mock_api, mock_config)
+        assert len(service.list_reminders()) == 2
+
+        updated = self._make_reminder_model(reminder_id="rem-1", title="New title")
+        mock_api.reminders.iter_changes.return_value = [
+            self._make_change(updated),
+            self._make_change(None, "deleted", "rem-2"),
+        ]
+
+        result = service.list_reminders()
+
+        assert [entry["title"] for entry in result] == ["New title"]
+
+    def test_list_rename_refreshes_cached_entries(self, mock_api, mock_config):
+        original_list = self._make_list_model(title="Personal")
+        mock_api.reminders.lists.return_value = [original_list]
+        mock_api.reminders.reminders.return_value = [self._make_reminder_model()]
+        service = self._make_service(mock_api, mock_config)
+        assert service.list_reminders()[0]["list"] == "Personal"
+
+        renamed_list = self._make_list_model(title="Renamed")
+        mock_api.reminders.lists.return_value = [renamed_list]
+
+        assert service.list_reminders()[0]["list"] == "Renamed"
+
+    def test_cursor_is_captured_before_incremental_read(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+        mock_api.reminders.reminders.return_value = [self._make_reminder_model()]
+        service = self._make_service(mock_api, mock_config)
+        service.list_reminders()
+        mock_api.reminders.reset_mock()
+        mock_api.reminders.lists.return_value = [lst]
+        mock_api.reminders.sync_cursor.return_value = "cursor-2"
+        mock_api.reminders.iter_changes.return_value = []
+
+        service.list_reminders()
+
+        method_names = [call[0] for call in mock_api.reminders.method_calls]
+        assert method_names.index("sync_cursor") < method_names.index("iter_changes")
+
+    def test_invalid_cursor_falls_back_to_full_snapshot(self, mock_api, mock_config):
+        lst = self._make_list_model()
+        mock_api.reminders.lists.return_value = [lst]
+        original = self._make_reminder_model(title="Original")
+        mock_api.reminders.reminders.return_value = [original]
+        service = self._make_service(mock_api, mock_config)
+        service.list_reminders()
+
+        refreshed = self._make_reminder_model(title="Refreshed")
+        mock_api.reminders.reminders.return_value = [refreshed]
+        mock_api.reminders.iter_changes.side_effect = RuntimeError("expired cursor")
+
+        result = service.list_reminders()
+
+        assert result[0]["title"] == "Refreshed"
+
+    def test_atomic_state_failure_preserves_previous_generation(
+        self, mock_api, mock_config
+    ):
+        service = self._make_service(mock_api, mock_config)
+        service._write_sync_state("cursor-1", [])
+
+        with (
+            patch("pathlib.Path.replace", side_effect=OSError("disk full")),
+            pytest.raises(OSError),
+        ):
+            service._write_sync_state("cursor-2", [{"id": "rem-1"}])
+
+        assert service._load_sync_state() == ("cursor-1", [])
 
     def test_add_reminder_success(self, mock_api, mock_config):
         lst = self._make_list_model()
