@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "icloud-cli-tools"
-version = "0.1.2"
+version = "0.1.3"
 description = "Access iCloud Calendar, Reminders, Notes, and Find My from Linux"
 readme = "README.md"
 license = "MIT"
