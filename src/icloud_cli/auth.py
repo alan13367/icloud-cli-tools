@@ -131,6 +131,18 @@ class AuthManager:
 
         max_attempts = 3
         for attempt in range(max_attempts):
+            if attempt:
+                # pyicloud closes its trusted-device bridge after validation.
+                # A retry must request a new challenge before accepting a code.
+                try:
+                    delivered = self._api.request_2fa_code()
+                except Exception as e:
+                    error(f"Failed to trigger 2FA delivery: {e}")
+                    return False
+                if not delivered:
+                    error("Could not request a fresh 2FA code.")
+                    return False
+                info("Check your trusted devices or SMS for the newest code.")
             code = click.prompt("Enter 2FA code")
             try:
                 if self._api.validate_2fa_code(code):
@@ -230,7 +242,7 @@ class AuthManager:
             "session_dir": self.config.session_dir,
         }
 
-    def setup_imap_password(self) -> bool:
+    def setup_imap_password(self, imap_username: str | None = None) -> bool:
         """Guide user through setting up an app-specific password for Notes (IMAP).
 
         Returns True if password was stored successfully.
@@ -245,8 +257,10 @@ class AuthManager:
         info("  → Sign In & Security → App-Specific Passwords → Generate")
         print()
 
-        password = click.prompt("Enter app-specific password", hide_input=True)
+        password = click.prompt("Enter app-specific password", hide_input=True).strip()
         keyring.set_password(KEYRING_IMAP_SERVICE, apple_id, password)
+        if imap_username:
+            self.config.imap_username = imap_username.strip()
         self.config.imap_password_in_keyring = True
         self.config.save()
 
@@ -266,7 +280,7 @@ class AuthManager:
         if not password:
             return None
 
-        return (apple_id, password)
+        return (self.config.imap_username or apple_id, password)
 
     def _get_session(self) -> PyiCloudService:
         """Get or restore a cached PyiCloudService session."""

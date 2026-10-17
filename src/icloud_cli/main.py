@@ -326,10 +326,13 @@ def notes():
 
 
 @notes.command("setup-imap")
+@click.option(
+    "--username", default=None, help="Primary iCloud Mail address, if different from Apple ID."
+)
 @pass_context
-def notes_setup_imap(ctx: AppContext):
+def notes_setup_imap(ctx: AppContext, username: str | None):
     """Set up app-specific password for Notes access."""
-    ctx.auth.setup_imap_password()
+    ctx.auth.setup_imap_password(imap_username=username)
 
 
 @notes.command("list")

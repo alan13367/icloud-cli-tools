@@ -103,6 +103,18 @@ icloud-cli notes search "keyword"
 > [appleid.apple.com](https://appleid.apple.com/account/manage) →
 > *Sign In & Security* → *App-Specific Passwords*.
 
+If your Apple Account uses a different sign-in address, configure your primary
+iCloud Mail address separately for IMAP:
+
+```bash
+icloud-cli notes setup-imap --username yourname@icloud.com
+```
+
+The app-specific password remains stored under your Apple Account in the system
+keyring. Notes commands use the configured IMAP username without changing your
+Apple Account sign-in. These commands access the IMAP `Notes` folder; they do not
+guarantee access to all modern iCloud Notes or shared/locked notes.
+
 ### Find My
 
 ```bash
@@ -133,9 +145,9 @@ systemctl --user start icloud-cli-sync
 ### Output Formats
 
 ```bash
-icloud-cli calendar list -f table   # Rich formatted table (default)
-icloud-cli calendar list -f json    # Machine-readable JSON
-icloud-cli calendar list -f plain   # Tab-separated for scripting
+icloud-cli -f table calendar list   # Rich formatted table (default)
+icloud-cli -f json calendar list    # Machine-readable JSON
+icloud-cli -f plain calendar list   # Tab-separated for scripting
 ```
 
 ## Configuration
@@ -149,6 +161,10 @@ verbose = false
 
 [auth]
 apple_id = "your@icloud.com"
+
+[notes]
+# Optional when your iCloud Mail address differs from your Apple Account.
+imap_username = "yourname@icloud.com"
 
 [sync]
 sync_interval_minutes = 15

@@ -19,6 +19,8 @@ from typing import Any
 
 from dateutil import parser as dateutil_parser
 from pyicloud import PyiCloudService
+from pyicloud.exceptions import PyiCloudAPIResponseException
+from pyicloud.services.reminders.client import RemindersApiError
 
 from icloud_cli.config import Config
 
@@ -63,9 +65,16 @@ class RemindersService:
             # Capture an upper bound before reading any reminder records. If a
             # change arrives while the read is in progress, keeping this older
             # cursor makes the next invocation replay that change safely.
-            next_cursor = self._reminders_service.sync_cursor()
+            try:
+                next_cursor = self._reminders_service.sync_cursor()
+            except (PyiCloudAPIResponseException, RemindersApiError):
+                # A query-based cursor is optional; some accounts reject it.
+                next_cursor = None
+                state = None
 
-            if state is None:
+            if next_cursor is None:
+                data_map = self._zone_reminder_snapshot(list_map)
+            elif state is None:
                 data_map = self._full_reminder_snapshot(rlists, list_map)
             else:
                 cursor, cached_data = state
@@ -103,8 +112,9 @@ class RemindersService:
         cached_data = list(data_map.values())
         # The old state remains intact on failure because replacement is
         # atomic, so the next invocation replays from its older cursor.
-        with suppress(OSError):
-            self._write_sync_state(next_cursor, cached_data)
+        if next_cursor is not None:
+            with suppress(OSError):
+                self._write_sync_state(next_cursor, cached_data)
 
         result = []
         for cached_entry in cached_data:
@@ -161,13 +171,32 @@ class RemindersService:
     ) -> dict[str, dict[str, Any]]:
         """Fetch a complete deduplicated reminder snapshot."""
         data_map: dict[str, dict[str, Any]] = {}
-        for rlist in rlists:
-            for reminder in self._reminders_service.reminders(list_id=rlist.id):
-                if getattr(reminder, "deleted", False):
-                    continue
-                data_map[reminder.id] = self._reminder_to_entry(
-                    reminder, list_map.get(reminder.list_id, reminder.list_id)
-                )
+        try:
+            for rlist in rlists:
+                for reminder in self._reminders_service.reminders(list_id=rlist.id):
+                    if getattr(reminder, "deleted", False):
+                        continue
+                    data_map[reminder.id] = self._reminder_to_entry(
+                        reminder, list_map.get(reminder.list_id, reminder.list_id)
+                    )
+        except (PyiCloudAPIResponseException, RemindersApiError):
+            # Discard a partial query result and read the complete zone instead.
+            return self._zone_reminder_snapshot(list_map)
+        return data_map
+
+    def _zone_reminder_snapshot(
+        self, list_map: dict[str, str]
+    ) -> dict[str, dict[str, Any]]:
+        """Read a full snapshot without Apple's per-list query endpoint."""
+        data_map: dict[str, dict[str, Any]] = {}
+        for change in self._reminders_service.iter_changes(since=None):
+            reminder = change.reminder
+            if change.type == "deleted" or reminder is None or reminder.deleted:
+                data_map.pop(change.reminder_id, None)
+                continue
+            data_map[reminder.id] = self._reminder_to_entry(
+                reminder, list_map.get(reminder.list_id, reminder.list_id)
+            )
         return data_map
 
     def list_reminder_lists(self) -> list[dict[str, Any]]:

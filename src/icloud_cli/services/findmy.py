@@ -5,6 +5,7 @@ Provides device tracking, sound playing, and lost mode via pyicloud.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from pyicloud import PyiCloudService
@@ -30,12 +31,16 @@ class FindMyService:
             return []
 
         result = []
-        for device in devices.values():
+        for device in _device_values(devices):
             status_data = device.status()
             location = device.location
 
             loc_str = ""
-            if location and location.get("latitude") and location.get("longitude"):
+            if (
+                location
+                and location.get("latitude") is not None
+                and location.get("longitude") is not None
+            ):
                 lat = location["latitude"]
                 lon = location["longitude"]
                 loc_str = f"{lat:.6f}, {lon:.6f}"
@@ -91,7 +96,10 @@ class FindMyService:
             "accuracy": f"{location.get('horizontalAccuracy', 'N/A')}m",
             "timestamp": location.get("timeStamp", ""),
             "maps_url": maps_url,
-            "battery": f"{status_data.get('batteryLevel', 0) * 100:.0f}%",
+            "battery": (
+                f"{status_data['batteryLevel'] * 100:.0f}%"
+                if status_data.get("batteryLevel") is not None else ""
+            ),
         }
 
     def play_sound(self, device_name: str) -> bool:
@@ -157,15 +165,22 @@ class FindMyService:
         name_lower = name.lower()
 
         # Exact match first
-        for device in devices.values():
+        for device in _device_values(devices):
             status = device.status()
             if status.get("name", "").lower() == name_lower:
                 return device
 
         # Partial match
-        for device in devices.values():
+        for device in _device_values(devices):
             status = device.status()
             if name_lower in status.get("name", "").lower():
                 return device
 
         return None
+
+
+def _device_values(devices: Any) -> Any:
+    """Accept pyicloud's service manager and older mapping-based clients."""
+    if isinstance(devices, Mapping):
+        return devices.values()
+    return devices.devices.values()

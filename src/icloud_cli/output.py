@@ -33,6 +33,9 @@ def render(
         title: Optional title for table output.
         columns: Optional ordered list of column keys to show. If None, uses all keys.
     """
+    if not data and format == "json":
+        _render_json([])
+        return
     if not data:
         info("No results found.")
         return

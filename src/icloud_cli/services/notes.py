@@ -9,9 +9,12 @@ Requires an app-specific password generated at https://appleid.apple.com.
 from __future__ import annotations
 
 import email
+import email.header
 import imaplib
+from contextlib import suppress
 from datetime import datetime
 from email.mime.text import MIMEText
+from html import escape
 from typing import Any
 
 import html2text
@@ -66,34 +69,16 @@ class NotesService:
             if status != "OK":
                 return []
 
-            message_ids = data[0].split()
+            message_ids = (data[0] or b"").split() if data else []
             result = []
 
             for msg_id in message_ids:
-                status, msg_data = conn.fetch(msg_id, "(ENVELOPE)")
-                if status != "OK":
+                status, hdr_data = conn.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE)])")
+                if status != "OK" or not hdr_data or not isinstance(hdr_data[0], tuple):
                     continue
-
-                # Parse envelope
-                envelope = msg_data[0]
-                if isinstance(envelope, tuple) and len(envelope) > 1:
-                    msg = (
-                        email.message_from_bytes(envelope[1])
-                        if isinstance(envelope[1], bytes)
-                        else None
-                    )
-                    subject = _decode_header(msg.get("Subject", "Untitled")) if msg else "Untitled"
-                    date_str = msg.get("Date", "") if msg else ""
-                else:
-                    # Try fetching headers instead
-                    status2, hdr_data = conn.fetch(msg_id, "(BODY[HEADER.FIELDS (SUBJECT DATE)])")
-                    if status2 == "OK" and hdr_data[0] and isinstance(hdr_data[0], tuple):
-                        hdr = email.message_from_bytes(hdr_data[0][1])
-                        subject = _decode_header(hdr.get("Subject", "Untitled"))
-                        date_str = hdr.get("Date", "")
-                    else:
-                        subject = "Untitled"
-                        date_str = ""
+                hdr = email.message_from_bytes(hdr_data[0][1])
+                subject = _decode_header(hdr.get("Subject", "Untitled"))
+                date_str = hdr.get("Date", "")
 
                 result.append({
                     "id": msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
@@ -105,7 +90,8 @@ class NotesService:
             return result
 
         finally:
-            conn.close()
+            with suppress(imaplib.IMAP4.error):
+                conn.close()
             conn.logout()
 
     def get_note(self, note_id: str) -> dict[str, Any] | None:
@@ -121,7 +107,7 @@ class NotesService:
         try:
             conn.select(NOTES_FOLDER, readonly=True)
 
-            status, msg_data = conn.fetch(note_id.encode(), "(RFC822)")
+            status, msg_data = conn.fetch(note_id.encode(), "(BODY.PEEK[])")
             if status != "OK" or not msg_data[0]:
                 return None
 
@@ -167,7 +153,8 @@ class NotesService:
             }
 
         finally:
-            conn.close()
+            with suppress(imaplib.IMAP4.error):
+                conn.close()
             conn.logout()
 
     def add_note(
@@ -187,19 +174,16 @@ class NotesService:
         try:
             target_folder = folder or NOTES_FOLDER
 
-            # Construct a MIME message for the note
-            msg = MIMEText(body, "html", "utf-8")
+            # Construct MIME once so transfer encoding matches the HTML body.
+            html_body = (
+                f"<html><head><title>{escape(title)}</title></head>"
+                f"<body><div>{escape(body).replace(chr(10), '<br>')}</div></body></html>"
+            )
+            msg = MIMEText(html_body, "html", "utf-8")
             msg["Subject"] = title
             msg["From"] = self.apple_id
             msg["X-Uniform-Type-Identifier"] = "com.apple.mail-note"
             msg["Date"] = email.utils.formatdate(localtime=True)
-
-            # Wrap body in basic HTML
-            html_body = (
-                f"<html><head><title>{title}</title></head>"
-                f"<body><div>{body}</div></body></html>"
-            )
-            msg.set_payload(html_body, "utf-8")
 
             # Append to Notes folder
             status, _ = conn.append(
@@ -231,17 +215,19 @@ class NotesService:
         try:
             conn.select(NOTES_FOLDER, readonly=True)
 
+            # Escape IMAP quoted-string syntax in user input.
+            query = query.replace("\\", "\\\\").replace('"', '\\"')
             # Search in subject and body
-            status, data = conn.search(None, f'(OR SUBJECT "{query}" TEXT "{query}")')
+            status, data = conn.search(None, "OR", "SUBJECT", f'"{query}"', "TEXT", f'"{query}"')
             if status != "OK":
                 return []
 
-            message_ids = data[0].split()
+            message_ids = (data[0] or b"").split() if data else []
             result = []
 
             for msg_id in message_ids:
                 status, hdr_data = conn.fetch(
-                    msg_id, "(BODY[HEADER.FIELDS (SUBJECT DATE)])"
+                    msg_id, "(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE)])"
                 )
                 if status == "OK" and hdr_data[0] and isinstance(hdr_data[0], tuple):
                     hdr = email.message_from_bytes(hdr_data[0][1])
@@ -258,7 +244,8 @@ class NotesService:
             return result
 
         finally:
-            conn.close()
+            with suppress(imaplib.IMAP4.error):
+                conn.close()
             conn.logout()
 
 

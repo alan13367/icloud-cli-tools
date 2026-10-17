@@ -37,6 +37,7 @@ class Config:
 
     # Notes (IMAP)
     imap_password_in_keyring: bool = False
+    imap_username: str = ""
 
     # Sync
     sync_interval_minutes: int = 15
@@ -70,6 +71,7 @@ class Config:
             config.verbose = general.get("verbose", config.verbose)
             config.apple_id = auth.get("apple_id", config.apple_id)
             config.session_dir = auth.get("session_dir", config.session_dir)
+            config.imap_username = notes.get("imap_username", "")
             config.imap_password_in_keyring = notes.get(
                 "imap_password_in_keyring", config.imap_password_in_keyring
             )
@@ -99,6 +101,7 @@ class Config:
             },
             "notes": {
                 "imap_password_in_keyring": self.imap_password_in_keyring,
+                "imap_username": self.imap_username,
             },
             "sync": {
                 "sync_interval_minutes": self.sync_interval_minutes,
