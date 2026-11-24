@@ -37,7 +37,7 @@ def sync_all(auth: AuthManager, config: Config) -> None:
         now = datetime.now()
         events = cal_service.list_events(
             from_date=now.strftime("%Y-%m-%d"),
-            to_date=(now + timedelta(days=30)).strftime("%Y-%m-%d"),
+            to_date=(now + timedelta(days=config.calendar_days_ahead)).strftime("%Y-%m-%d"),
         )
         _save_cache(cache_dir / "calendar.json", events)
         success(f"Calendar: {len(events)} events synced.")
