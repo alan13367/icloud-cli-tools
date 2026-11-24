@@ -41,6 +41,7 @@ class Config:
     # Sync
     sync_interval_minutes: int = 15
     cache_dir: str = str(DEFAULT_CACHE_DIR)
+    calendar_days_ahead: int = 30
 
     # Calendar
     default_calendar: str = ""
@@ -77,6 +78,9 @@ class Config:
                 "sync_interval_minutes", config.sync_interval_minutes
             )
             config.cache_dir = sync.get("cache_dir", config.cache_dir)
+            config.calendar_days_ahead = sync.get(
+                "calendar_days_ahead", config.calendar_days_ahead
+            )
             config.default_calendar = calendar.get("default_calendar", config.default_calendar)
             config.default_reminder_list = reminders.get(
                 "default_reminder_list", config.default_reminder_list
@@ -103,6 +107,7 @@ class Config:
             "sync": {
                 "sync_interval_minutes": self.sync_interval_minutes,
                 "cache_dir": self.cache_dir,
+                "calendar_days_ahead": self.calendar_days_ahead,
             },
             "calendar": {
                 "default_calendar": self.default_calendar,

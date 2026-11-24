@@ -152,6 +152,7 @@ apple_id = "your@icloud.com"
 
 [sync]
 sync_interval_minutes = 15
+calendar_days_ahead = 30   # how far ahead `sync` / the daemon cache calendar events
 
 [calendar]
 default_calendar = "Personal"
